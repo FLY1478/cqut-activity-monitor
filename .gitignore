@@ -1,0 +1,11 @@
+node_modules/
+.private/
+.env*
+!.env.example
+*.dpapi
+*.session.json
+*.har
+test-results/
+playwright-report/
+.playwright-mcp/
+access-report.json
