@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
-import {parseSandboxStatus} from './sandbox-status.mjs';
+import {parseSandboxStatus} from '../src/sandbox-status.ts';
 test('accept enabled namespace and seccomp layers without requiring obsolete SUID layer',()=>{
   assert.equal(parseSandboxStatus('SUID sandbox No\nPID namespaces Yes\nNetwork namespaces Yes\nSeccomp-BPF sandbox Yes\nSeccomp-BPF sandbox supports TSYNC Yes').verified,true);
 });

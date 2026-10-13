@@ -3,10 +3,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { resolve, join, sep } from 'node:path';
 import type { Browser, BrowserType } from 'playwright';
+import {parseSandboxStatus,type LinuxSandboxStatus} from './sandbox-status.ts';
 
 // Launch a regular visible browser with its supported local debugging interface.
 // No fingerprint patches, injected challenge solvers, or altered site scripts.
-export async function launchNormalBrowser(chromium:BrowserType, executable:string, privateDir:string):Promise<{browser:Browser;close:()=>Promise<void>}> {
+export async function launchNormalBrowser(chromium:BrowserType, executable:string, privateDir:string):Promise<{browser:Browser;close:()=>Promise<void>;sandboxStatus?:LinuxSandboxStatus}> {
   const base=resolve(privateDir);
   const profile=await mkdtemp(join(base,'browser-'));
   const port=await new Promise<number>((resolvePort,reject)=>{
@@ -33,14 +34,24 @@ export async function launchNormalBrowser(chromium:BrowserType, executable:strin
     }
   };
   try {
-    for(let attempt=0;attempt<40;attempt++) {
+    const deadline=Date.now()+45000;
+    while(Date.now()<deadline) {
       if(failed||child.exitCode!==null) throw new Error('NORMAL_BROWSER_START_FAILED');
       try { browser=await chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:1000});break; }
       catch { await new Promise(resolve=>setTimeout(resolve,250)); }
     }
     if(!browser) throw new Error('NORMAL_BROWSER_CONNECTION_FAILED');
+    let sandboxStatus:LinuxSandboxStatus|undefined;
+    if(process.platform==='linux') {
+      const statusPage=await browser.contexts()[0].newPage();
+      try {
+        await statusPage.goto('chrome://sandbox',{timeout:10000});
+        sandboxStatus=parseSandboxStatus(await statusPage.locator('body').innerText());
+        if(!sandboxStatus.verified)throw new Error('NORMAL_BROWSER_SANDBOX_NOT_VERIFIED');
+      } finally {await statusPage.close().catch(()=>{});}
+    }
     // Default profile remains blank; all school activity uses an isolated,
     // nonpersistent browser context, with encrypted explicit session exports.
-    return {browser,close};
+    return {browser,close,sandboxStatus};
   } catch(error) {await close();throw error;}
 }
