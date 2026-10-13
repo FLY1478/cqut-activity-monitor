@@ -12,7 +12,7 @@ import {acquireLocalLock} from './local-lock.ts';
 const root=resolve(process.cwd()),directory=join(root,'.private','cloud-e2e');
 const reportPath=join(root,'cloud-e2e-report.json');
 const phase=process.argv.includes('--collect')?process.argv[process.argv.indexOf('--collect')+1]:undefined;
-const safeError=(e:unknown)=>e instanceof Error&&/^[A-Z_]{1,90}$/.test(e.message)?e.message:'CLOUD_TEST_OPERATION_FAILED';
+const safeError=(e:unknown)=>e instanceof Error&&e.name==='TimeoutError'?'BROWSER_TIMEOUT':e instanceof Error&&/^[A-Z_]{1,90}$/.test(e.message)?e.message:'CLOUD_TEST_OPERATION_FAILED';
 const summarized=(scan:Scan)=>({complete:scan.complete,coverage:scan.coverage,details:scan.activities.length,verifiedDetails:scan.activities.filter(a=>a.detailVerified===true).length,authMode:scan.authMode,durationMs:scan.durationMs,sandboxVerified:scan.sandboxVerified===true});
 function requireFullScan(scan:Scan,authMode:'fresh'|'restored'){
   if(!scan.complete||scan.activities.length!==scan.coverage.Activity||scan.activities.some(a=>a.detailVerified!==true))throw new Error('FULL_SCAN_VERIFICATION_FAILED');
@@ -22,14 +22,15 @@ function requireFullScan(scan:Scan,authMode:'fresh'|'restored'){
 async function collect(){
   if(!['fresh','restored','missing_session'].includes(phase!))throw new Error('CLOUD_TEST_PHASE_INVALID');
   let release:(()=>Promise<void>)|undefined;
+  let progress:unknown;
   try{
     release=await acquireLocalLock(directory);
-    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined});
+    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined,progress:value=>{progress=value;}});
     if(phase==='missing_session'){
       if(scan.authMode!=='fresh'||!scan.sandboxVerified||scan.activities.some(a=>!a.detailVerified))throw new Error('MISSING_SESSION_RECOVERY_NOT_VERIFIED');
     }else requireFullScan(scan,phase==='fresh'?'fresh':'restored');
     await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:true,...summarized(scan)});
-  }catch(e){await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:false,error:safeError(e)});process.exitCode=1;}
+  }catch(e){await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:false,error:safeError(e),progress});process.exitCode=1;}
   finally{await release?.();}
 }
 async function subprocess(name:string){
@@ -40,7 +41,7 @@ async function subprocess(name:string){
     child.on('exit',code=>{clearTimeout(timeout);done(code);});
   });
   const result=await readSecret<Record<string,unknown>>(join(directory,`${name}-result.dpapi`));
-  if(exit!==0||result.ok!==true)throw new Error(typeof result.error==='string'?result.error:'CLOUD_TEST_CHILD_FAILED');
+  if(exit!==0||result.ok!==true){console.log(JSON.stringify({collectionFailure:{phase:name,...result}}));throw new Error(typeof result.error==='string'?result.error:'CLOUD_TEST_CHILD_FAILED');}
   return result;
 }
 async function main(){

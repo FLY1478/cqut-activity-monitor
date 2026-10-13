@@ -45,13 +45,20 @@ async function index(page:Page,section:'Activity'|'Project'|'Course',click=false
   if(section==='Activity'&&/loadMore|pageSize|currentPage|下一页|加载更多/.test(html))throw new Error('PAGINATION_REQUIRES_ADAPTER');
   return {raw,html,links};
 }
-async function authenticate(context:BrowserContext):Promise<Page> {
-  const page=await context.newPage();await page.goto(ROOT,{waitUntil:'domcontentloaded',timeout:45000});
-  await page.waitForURL('https://uis.cqut.edu.cn/**',{timeout:30000});
+async function authenticate(context:BrowserContext,progress?:(value:unknown)=>void):Promise<Page> {
+  progress?.({phase:'auth_entry'});
+  const page=await context.newPage();
+  try{
+    const response=await page.goto(ROOT,{waitUntil:'domcontentloaded',timeout:45000});
+    progress?.({phase:'auth_redirect',status:response?.status()??null});
+    await page.waitForURL('https://uis.cqut.edu.cn/**',{timeout:30000});
+  }catch(e){const host=new URL(page.url()).hostname;progress?.({phase:'auth_entry_failure',host:['2class.cqut.edu.cn','uis.cqut.edu.cn'].includes(host)?host:'other'});throw e;}
   const privateDir=process.env.CQUT_PRIVATE_DIR!;
   const credentials=await readSecret<{account:string;password:string}>(join(privateDir,'credentials.dpapi'));
+  progress?.({phase:'password_request'});
   const response=await context.request.post(LOGIN,{data:{name:credentials.account,pwd:encryptPassword(credentials.password),verifyCode:'',universityId:'100005'},headers:{Origin:'https://uis.cqut.edu.cn',Referer:page.url()},maxRedirects:0,timeout:30000});
   const outcome=classifyLogin((await response.json()).code);
+  progress?.({phase:'password_result',outcome});
   if(outcome!=='accepted')throw new Error(outcome.toUpperCase());
   await page.reload({waitUntil:'domcontentloaded',timeout:45000});await page.waitForTimeout(2000);
   if((await page.locator('body').innerText()).includes('请选择本次登录角色')){
@@ -59,7 +66,7 @@ async function authenticate(context:BrowserContext):Promise<Page> {
     if(students.length!==1)throw new Error('STUDENT_ROLE_NOT_CONFIRMED');
     await select.selectOption({label:students[0]!});await page.getByText('确定',{exact:true}).click();await page.waitForTimeout(2000);
   }
-  if(!page.url().includes('/Student/'))throw new Error('STUDENT_ROLE_NOT_CONFIRMED');return page;
+  if(!page.url().includes('/Student/'))throw new Error('STUDENT_ROLE_NOT_CONFIRMED');progress?.({phase:'student_role_confirmed'});return page;
 }
 export type Scan={scannedAt:string;complete:boolean;profile:Profile;activities:Activity[];coverage:{Activity:number;Project:number;Course:number};authMode:'restored'|'fresh';durationMs:number;sandboxVerified?:boolean};
 export async function scanSchool(privateDir:string,options:{sample?:number;forceFresh?:boolean;progress?:(value:unknown)=>void}={}):Promise<Scan> {
@@ -67,12 +74,14 @@ export async function scanSchool(privateDir:string,options:{sample?:number;force
   const started=Date.now();const pw=await loadPlaywright();const executable=process.env.CQUT_CHROMIUM_PATH;
   if(!executable)throw new Error('CHROMIUM_PATH_REQUIRED');
   const launched=await launchNormalBrowser(pw.chromium,executable,privateDir);
+  options.progress?.({phase:'browser_ready',sandboxVerified:launched.sandboxStatus?.verified===true});
   try {
     let context:BrowserContext;let page:Page;let activitiesIndex:IndexResult|undefined;let authMode:Scan['authMode']='restored';
     const state=options.forceFresh?undefined:await readSecret<Awaited<ReturnType<BrowserContext['storageState']>>>(join(privateDir,'session.dpapi')).catch(()=>undefined);
     context=await launched.browser.newContext({...settings,storageState:state});await protectReadOnly(context);page=await context.newPage();
     if(state)try {activitiesIndex=await index(page,'Activity');}catch{await context.close();context=await launched.browser.newContext(settings);await protectReadOnly(context);}
-    if(!activitiesIndex){authMode='fresh';if(!state)await page.close();page=await authenticate(context);activitiesIndex=await index(page,'Activity');}
+    if(!activitiesIndex){authMode='fresh';if(!state)await page.close();page=await authenticate(context,options.progress);activitiesIndex=await index(page,'Activity');}
+    options.progress?.({phase:'activity_list',count:activitiesIndex.raw.length,authMode});
     const rawCapture:{section:string;html:string;raw?:unknown}[]=[{section:'Activity',html:activitiesIndex.html,raw:activitiesIndex.raw}];
     // Read each visible source; a nonempty unsupported source blocks a complete scan.
     const coverage={Activity:activitiesIndex.raw.length,Project:0,Course:0};
@@ -81,6 +90,7 @@ export async function scanSchool(privateDir:string,options:{sample?:number;force
     await page.locator('a[href="/Student/My/index.html"]').last().click();await page.waitForLoadState('load');await page.waitForTimeout(2000);
     const profileHtml=await page.content();if(!(await page.locator('body').innerText()).trim())throw new Error('PROFILE_EMPTY');
     const profile=mergeProfile(parseProfile(profileHtml),await readPreferences(privateDir));rawCapture.push({section:'My',html:profileHtml});
+    options.progress?.({phase:'profile_ready'});
     await page.waitForTimeout(1000);activitiesIndex=await index(page,'Activity',true);
     coverage.Activity=activitiesIndex.raw.length;
     const activities:Activity[]=[];const selected=options.sample===undefined?activitiesIndex.raw:activitiesIndex.raw.slice(0,options.sample);
