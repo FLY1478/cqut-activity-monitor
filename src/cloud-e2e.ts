@@ -1,7 +1,7 @@
 import {mkdir,writeFile,rm} from 'node:fs/promises';
 import {resolve,join,sep} from 'node:path';
 import {fileURLToPath} from 'node:url';
-import {spawn} from 'node:child_process';
+import {runCloudChild} from './cloud-child.ts';
 import {openCloudTestConfig} from './cloud-test-config.ts';
 import {readSecret,writeSecret} from './secrets.ts';
 import {scanSchool,type Scan} from './school-client.ts';
@@ -26,23 +26,17 @@ async function collect(){
   let saveProgress=Promise.resolve();
   try{
     release=await acquireLocalLock(directory);
-    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined,progress:value=>{progress=value;saveProgress=saveProgress.then(()=>writeSecret(join(directory,`${phase}-progress.dpapi`),value));}});
+    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined,minimumActivities:phase==='missing_session'?1:0,progress:value=>{progress=value;saveProgress=saveProgress.then(()=>writeSecret(join(directory,`${phase}-progress.dpapi`),value));}});
     await saveProgress;
     if(phase==='missing_session'){
-      if(scan.authMode!=='fresh'||!scan.sandboxVerified||scan.activities.some(a=>!a.detailVerified))throw new Error('MISSING_SESSION_RECOVERY_NOT_VERIFIED');
+      if(scan.authMode!=='fresh'||!scan.sandboxVerified||scan.activities.length<1||scan.activities.some(a=>!a.detailVerified))throw new Error('MISSING_SESSION_RECOVERY_NOT_VERIFIED');
     }else requireFullScan(scan,phase==='fresh'?'fresh':'restored');
     await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:true,...summarized(scan)});
   }catch(e){await saveProgress.catch(()=>{});await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:false,error:safeError(e),progress});process.exitCode=1;}
   finally{await release?.();}
 }
 async function subprocess(name:string){
-  let timedOut=false;
-  const exit=await new Promise<number|null>((done,reject)=>{
-    const child=spawn(process.execPath,['--disable-warning=ExperimentalWarning',fileURLToPath(import.meta.url),'--collect',name],{env:process.env,stdio:'ignore',windowsHide:true});
-    const timeout=setTimeout(()=>{timedOut=true;child.kill();},12*60*1000);
-    child.on('error',()=>{clearTimeout(timeout);reject(new Error('CLOUD_TEST_CHILD_START_FAILED'));});
-    child.on('exit',code=>{clearTimeout(timeout);done(code);});
-  });
+  const {exitCode:exit,timedOut}=await runCloudChild(fileURLToPath(import.meta.url),['--collect',name],12*60*1000);
   const result=await readSecret<Record<string,unknown>>(join(directory,`${name}-result.dpapi`)).catch(async()=>({ok:false,error:timedOut?'CLOUD_TEST_COLLECTION_TIMEOUT':'CLOUD_TEST_CHILD_FAILED',progress:await readSecret(join(directory,`${name}-progress.dpapi`)).catch(()=>undefined)}));
   if(exit!==0||result.ok!==true){console.log(JSON.stringify({collectionFailure:{phase:name,...result}}));throw new Error(typeof result.error==='string'?result.error:'CLOUD_TEST_CHILD_FAILED');}
   return result;
@@ -57,8 +51,14 @@ async function main(){
     process.env.CQUT_STORAGE_KEY=key;process.env.CQUT_PRIVATE_DIR=directory;process.env.CQUT_CLOUD_READONLY='1';
     delete process.env.CQUT_E2E_CONFIG;delete process.env.CQUT_E2E_STORAGE_KEY;
     await mkdir(directory,{recursive:true,mode:0o700});
-    for(const [file,value] of [['credentials',config.credentials],['wechat',config.wechat],['preferences',config.preferences],['notification-preferences',config.notification]] as const)await writeSecret(join(directory,file+'.dpapi'),value);
+    for(const [file,value] of [['credentials',config.credentials],['preferences',config.preferences]] as const)await writeSecret(join(directory,file+'.dpapi'),value);
     report.configValidated=true;await save();
+    if(config.purpose==='school_recovery'){
+      report.purpose='school_recovery_probe';report.notification={status:'disabled',wechatKeysProvisioned:false};
+      await writeSecret(join(directory,'session.dpapi'),{cookies:[],origins:[]});
+      const result=await subprocess('missing_session');report.steps.push({phase:'missing_session',...result});report.status='sampled_session_recovery_passed';return;
+    }
+    await writeSecret(join(directory,'wechat.dpapi'),config.wechat);await writeSecret(join(directory,'notification-preferences.dpapi'),config.notification);
     for(const name of ['fresh','restored','missing_session']){
       if(name==='missing_session')await writeSecret(join(directory,'session.dpapi'),{cookies:[],origins:[]});
       const result=await subprocess(name);report.steps.push({phase:name,...result});await save();

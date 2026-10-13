@@ -12,3 +12,10 @@ test('cloud bundle authenticates ciphertext, expires and omits unrelated private
   const extra={...c,session:'do-not-upload',preferences:{...c.preferences,studentName:'do-not-upload'}};
   assert.ok(!JSON.stringify(validateCloudTestConfig(extra)).includes('do-not-upload'));
 });
+test('school-only recovery config strips all notification secrets and cannot become notification mode',()=>{
+  const c=config(),r=validateCloudTestConfig({...c,purpose:'school_recovery'}),key='56'.repeat(32);
+  assert.equal(r.purpose,'school_recovery');assert.equal(r.wechat,undefined);assert.equal(r.notification,undefined);
+  assert.ok(!JSON.stringify(r).includes('fake-secret'));
+  assert.deepEqual(openCloudTestConfig(sealCloudTestConfig(r,key),key),r);
+  assert.throws(()=>validateCloudTestConfig({...r,purpose:'school_and_wechat'}),/CONFIG_INVALID/);
+});

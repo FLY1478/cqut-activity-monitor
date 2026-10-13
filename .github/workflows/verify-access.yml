@@ -1,5 +1,5 @@
 name: Single-user cloud end-to-end test
-run-name: Read-only school scan and one WeChat summary
+run-name: Read-only recovery probe or single-user summary
 on:
   workflow_dispatch:
 permissions:
@@ -29,3 +29,4 @@ jobs:
       - name: Remove ephemeral browser profiles and encrypted private files
         if: always()
         run: node --disable-warning=ExperimentalWarning src/cloud-e2e.ts --cleanup
+

@@ -35,11 +35,11 @@ async function run(){
   const existing=JSON.parse((await command(gh,['secret','list','--repo',repo,'--json','name'],{windowsHide:true})).stdout) as {name:string}[];
   if(existing.some(s=>names.includes(s.name)))throw new Error('EXISTING_TEST_SECRET_NOT_OVERWRITTEN');
   const credentials=await readSecret<{account:string;password:string}>(join(directory,'credentials.dpapi'));
-  const wechat=await readSecret<WechatConfig>(join(directory,'wechat.dpapi'));
   const preferences=await readSecret<Profile>(join(directory,'preferences.dpapi'));
-  const notification=await readSecret<{style:'template'|'article-preview'}>(join(directory,'notification-preferences.dpapi'));
   const createdAt=Date.now();
-  const config=validateCloudTestConfig({version:1,createdAt,expiresAt:createdAt+2*60*60*1000,credentials,wechat,preferences,notification:{style:notification.style,dailyPreviewBudget:1}});
+  const base={version:1,createdAt,expiresAt:createdAt+2*60*60*1000,credentials,preferences};
+  const recoveryOnly=process.argv.includes('--school-only');
+  const config=validateCloudTestConfig(recoveryOnly?{...base,purpose:'school_recovery'}:{...base,wechat:await readSecret<WechatConfig>(join(directory,'wechat.dpapi')),notification:{style:(await readSecret<{style:'template'|'article-preview'}>(join(directory,'notification-preferences.dpapi'))).style,dailyPreviewBudget:1}});
   const key=randomBytes(32).toString('hex'),payload=sealCloudTestConfig(config,key);
   // This receipt is Windows-user encrypted, contains no existing session, and
   // permits cleanup of only the new names created by this invocation.
@@ -54,6 +54,6 @@ async function run(){
     for(const name of receipt.names)await ghInput(['secret','delete',name,'--repo',repo]).catch(()=>{});
     throw new Error('CLOUD_TEST_PROVISION_FAILED');
   }
-  console.log(JSON.stringify({repository:repo,temporarySecretsConfigured:receipt.names.length,encryptedBundle:true,expiresInHours:2,existingSessionUploaded:false}));
+  console.log(JSON.stringify({repository:repo,temporarySecretsConfigured:receipt.names.length,encryptedBundle:true,expiresInHours:2,existingSessionUploaded:false,wechatKeysUploaded:!recoveryOnly}));
 }
 run().catch(()=>{console.error('CLOUD_TEST_PROVISION_OR_CLEANUP_FAILED');process.exitCode=1;});

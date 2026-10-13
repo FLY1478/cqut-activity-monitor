@@ -3,6 +3,7 @@ import {importantFingerprint,enrollment,personalize,type Activity} from './activ
 import type {Scan} from './school-client.ts';
 import type {Notification,SendResult} from './wechat.ts';
 import {analyze} from './analysis.ts';
+import {requireSafeScanTransition} from './scan-integrity.ts';
 export type Change={activity:Activity;reason:'initial'|'new'|'opened'|'seat_restored'|'changed'};
 export type Event={id:string;createdAt:string;observedAt?:string;state:'pending'|'in_flight'|'accepted'|'rejected'|'unknown'|'received'|'filtered'|'divided';changes:Change[];effectiveChanges?:Change[];message:Notification;messageId?:string;errorCode?:number;filterReason?:string;channel?:SendResult['channel']};
 export type State={version:1;baseline?:Scan;events:Event[];lastDigestDay?:string;lastScanAttemptAt?:string};
@@ -10,7 +11,7 @@ export type DigestEvent=Event & {digestDay:string};
 export const emptyState=():State=>({version:1,events:[]});
 const relevant=(a:Activity)=>a.qualification.state!=='ineligible'&&['open','upcoming'].includes(a.availability);
 export function changes(previous:Scan|undefined,next:Scan):Change[] {
-  if(!next.complete)throw new Error('INCOMPLETE_SCAN_NOT_COMMITTED');
+  requireSafeScanTransition(previous,next);
   const old=new Map(previous?.activities.map(a=>[a.id,a])??[]);const found:Change[]=[];
   for(const a of next.activities){
     if(!relevant(a))continue;
