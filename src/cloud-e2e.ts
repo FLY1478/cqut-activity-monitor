@@ -23,24 +23,27 @@ async function collect(){
   if(!['fresh','restored','missing_session'].includes(phase!))throw new Error('CLOUD_TEST_PHASE_INVALID');
   let release:(()=>Promise<void>)|undefined;
   let progress:unknown;
+  let saveProgress=Promise.resolve();
   try{
     release=await acquireLocalLock(directory);
-    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined,progress:value=>{progress=value;}});
+    const scan=await scanSchool(directory,{forceFresh:phase==='fresh',sample:phase==='missing_session'?1:undefined,progress:value=>{progress=value;saveProgress=saveProgress.then(()=>writeSecret(join(directory,`${phase}-progress.dpapi`),value));}});
+    await saveProgress;
     if(phase==='missing_session'){
       if(scan.authMode!=='fresh'||!scan.sandboxVerified||scan.activities.some(a=>!a.detailVerified))throw new Error('MISSING_SESSION_RECOVERY_NOT_VERIFIED');
     }else requireFullScan(scan,phase==='fresh'?'fresh':'restored');
     await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:true,...summarized(scan)});
-  }catch(e){await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:false,error:safeError(e),progress});process.exitCode=1;}
+  }catch(e){await saveProgress.catch(()=>{});await writeSecret(join(directory,`${phase}-result.dpapi`),{ok:false,error:safeError(e),progress});process.exitCode=1;}
   finally{await release?.();}
 }
 async function subprocess(name:string){
+  let timedOut=false;
   const exit=await new Promise<number|null>((done,reject)=>{
     const child=spawn(process.execPath,['--disable-warning=ExperimentalWarning',fileURLToPath(import.meta.url),'--collect',name],{env:process.env,stdio:'ignore',windowsHide:true});
-    const timeout=setTimeout(()=>child.kill(),7*60*1000);
+    const timeout=setTimeout(()=>{timedOut=true;child.kill();},12*60*1000);
     child.on('error',()=>{clearTimeout(timeout);reject(new Error('CLOUD_TEST_CHILD_START_FAILED'));});
     child.on('exit',code=>{clearTimeout(timeout);done(code);});
   });
-  const result=await readSecret<Record<string,unknown>>(join(directory,`${name}-result.dpapi`));
+  const result=await readSecret<Record<string,unknown>>(join(directory,`${name}-result.dpapi`)).catch(async()=>({ok:false,error:timedOut?'CLOUD_TEST_COLLECTION_TIMEOUT':'CLOUD_TEST_CHILD_FAILED',progress:await readSecret(join(directory,`${name}-progress.dpapi`)).catch(()=>undefined)}));
   if(exit!==0||result.ok!==true){console.log(JSON.stringify({collectionFailure:{phase:name,...result}}));throw new Error(typeof result.error==='string'?result.error:'CLOUD_TEST_CHILD_FAILED');}
   return result;
 }
