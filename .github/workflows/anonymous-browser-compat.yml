@@ -19,7 +19,7 @@ jobs:
           node-version: '22.18.0'
       - run: npm ci --ignore-scripts
       - name: Verify sandbox report parsing
-        run: npm run check && npm test
+        run: npm run check && node --disable-warning=ExperimentalWarning scripts/cloud-unit-tests.ts
       - name: Read-only browser and anonymous school entry
         env:
           CQUT_PROBE_CHROME_PATH: /usr/bin/google-chrome
