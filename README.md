@@ -28,6 +28,10 @@ Windows 加密文件绑定当前 Windows 用户与电脑，不能直接复制到
 
 ## 免费云端验证
 
+先运行无需 Secrets 的手动工作流 `Anonymous browser compatibility`。它使用项目实际浏览器启动器，核验 Linux 沙箱、模拟页面、模拟会话重启、提交拦截及学校匿名认证页；不登录账号、不报名、不推送。Linux 沙箱状态无法确认时直接失败，不自动关闭保护。
+
+该方案已在标准 Ubuntu 24.04 runner 实测通过。当前华为云 FunctionGraph 的命名空间限制无法由应用启动参数修复；浏览器运行器与仍待验收的真实登录、持久化和定时运行见 [ADR 0004](docs/adr/0004-managed-browser-runner.md)。
+
 工作流仅支持手动派发，没有定时任务、报名或推送功能。
 使用标准 Ubuntu runner、固定提交的 GitHub 官方 Actions 和锁定版本的 npm 依赖。
 在仓库 Secrets 配置 `CQUT_USERNAME`、`CQUT_PASSWORD`、`CQUT_STORAGE_KEY` 后运行 `Verify school access`。
