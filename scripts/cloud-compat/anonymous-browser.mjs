@@ -44,15 +44,20 @@ async function launch(pw){
   chrome=spawn(process.env.CQUT_PROBE_CHROME_PATH,[`--remote-debugging-port=${port}`,'--remote-debugging-address=127.0.0.1',`--user-data-dir=${profile}`,'--no-first-run','--no-default-browser-check','about:blank'],{windowsHide:true,stdio:['ignore','ignore','pipe']});
   chrome.stderr?.on('data',chunk=>{
     const message=String(chunk);
+    if(/DevTools listening on/.test(message))report.devtoolsListening=true;
+    if(/Remote debugging.*(?:disabled|not allowed)/i.test(message))report.chromeStartIssue='REMOTE_DEBUGGING_DISABLED';
     if(/No usable sandbox|Failed to move to new namespace|Failed to unshare|Operation not permitted/.test(message))report.chromeStartIssue='SANDBOX_OR_NAMESPACE_UNAVAILABLE';
     else if(/Running as root/.test(message))report.chromeStartIssue='ROOT_USER_UNSUPPORTED';
     else if(/Missing X server|cannot open display|Failed to initialize.*platform/.test(message))report.chromeStartIssue='DISPLAY_UNAVAILABLE';
     else if(/error while loading shared libraries/.test(message))report.chromeStartIssue='SHARED_LIBRARY_MISSING';
   });
   chrome.on('error',()=>{failed=true;});
-  for(let i=0;i<40;i++){
+  const deadline=Date.now()+45000;
+  while(Date.now()<deadline){
     if(failed||chrome.exitCode!==null||chrome.signalCode!==null)throw new Error('BROWSER_START_FAILED');
-    try{browser=await pw.chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:1000});return;}catch{}
+    try{browser=await pw.chromium.connectOverCDP(`http://127.0.0.1:${port}`,{timeout:1000});return;}catch(error){
+      report.connectionIssue=String(error.message).match(/\b(?:ECONNREFUSED|ECONNRESET|EACCES|EPERM|ENOTFOUND|ERR_[A-Z_]{1,60})\b/)?.[0]??(error.name==='TimeoutError'?'CONNECTION_TIMEOUT':'CDP_CONNECTION_FAILED');
+    }
     await new Promise(r=>setTimeout(r,250));
   }
   throw new Error('BROWSER_CONNECTION_FAILED');
