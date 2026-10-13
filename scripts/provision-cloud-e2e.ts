@@ -12,6 +12,7 @@ const gh=process.platform==='win32'?'gh.exe':'gh';
 const directory=resolve(process.env.CQUT_PRIVATE_DIR??'../../work/private');
 const receiptPath=join(directory,'cloud-e2e-provision.dpapi');
 const command=promisify(execFile);
+let stage='identity';
 async function ghInput(args:string[],input?:string):Promise<void>{
   await new Promise<void>((resolveDone,reject)=>{
     const child=spawn(gh,args,{windowsHide:true,stdio:['pipe','ignore','ignore']});
@@ -26,10 +27,14 @@ async function run(){
   const repository=JSON.parse((await command(gh,['api','repos/'+repo],{windowsHide:true})).stdout);
   if(repository.full_name!==repo||repository.owner.id!==user.id||!repository.permissions?.admin)throw new Error('REPOSITORY_OWNERSHIP_NOT_VERIFIED');
   if(process.argv.includes('--remove')){
+    stage='cleanup_receipt_read';
     const receipt=await readSecret<{repo:string;names:string[];createdAt:number}>(receiptPath);
     if(receipt.repo!==repo||receipt.names.some(n=>!names.includes(n)))throw new Error('CLOUD_TEST_RECEIPT_INVALID');
+    stage='cleanup_inventory';
     const existing=JSON.parse((await command(gh,['secret','list','--repo',repo,'--json','name'],{windowsHide:true})).stdout) as {name:string}[];
+    stage='cleanup_delete';
     for(const name of receipt.names)if(existing.some(s=>s.name===name))await ghInput(['secret','delete',name,'--repo',repo]);
+    stage='cleanup_receipt_write';
     await writeSecret(receiptPath,{...receipt,removedAt:Date.now()});console.log('TEMPORARY_TEST_SECRETS_REMOVED');return;
   }
   const existing=JSON.parse((await command(gh,['secret','list','--repo',repo,'--json','name'],{windowsHide:true})).stdout) as {name:string}[];
@@ -56,4 +61,4 @@ async function run(){
   }
   console.log(JSON.stringify({repository:repo,temporarySecretsConfigured:receipt.names.length,encryptedBundle:true,expiresInHours:2,existingSessionUploaded:false,wechatKeysUploaded:!recoveryOnly}));
 }
-run().catch(()=>{console.error('CLOUD_TEST_PROVISION_OR_CLEANUP_FAILED');process.exitCode=1;});
+run().catch(()=>{console.error(JSON.stringify({error:'CLOUD_TEST_PROVISION_OR_CLEANUP_FAILED',stage}));process.exitCode=1;});
