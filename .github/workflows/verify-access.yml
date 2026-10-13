@@ -1,14 +1,14 @@
-name: Verify school access
+name: Anonymous browser compatibility
 on:
   workflow_dispatch:
 permissions:
   contents: read
 concurrency:
-  group: school-access-probe
+  group: anonymous-browser-compatibility
   cancel-in-progress: false
 jobs:
   verify:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -16,17 +16,21 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '22'
-      - run: npm ci
-      - run: npm run check && npm test
-      - run: npx playwright install --with-deps chromium
-      - name: Verify isolated cloud authentication
+          node-version: '22.18.0'
+      - run: npm ci --ignore-scripts
+      - name: Verify sandbox report parsing
+        run: node --test scripts/cloud-compat/sandbox-status.test.mjs
+      - name: Read-only browser and anonymous school entry
         env:
-          CQUT_USERNAME: ${{ secrets.CQUT_USERNAME }}
-          CQUT_PASSWORD: ${{ secrets.CQUT_PASSWORD }}
-          CQUT_STORAGE_KEY: ${{ secrets.CQUT_STORAGE_KEY }}
-          CQUT_PRIVATE_DIR: .private
-          CQUT_REPORT_PATH: .private/access-report.json
+          CQUT_PROBE_CHROME_PATH: /usr/bin/google-chrome
+          CQUT_PROBE_RESULT_PATH: probe-result.json
+        run: xvfb-run -a node scripts/cloud-compat/anonymous-browser.mjs
+      - name: Require every compatibility check
+        if: always()
         run: |
-          export CQUT_CHROMIUM_PATH="$(node -e 'console.log(require("playwright").chromium.executablePath())')"
-          xvfb-run -a npm run probe -- --normal-browser
+          test -f probe-result.json
+          node scripts/cloud-compat/verify-report.mjs
+      - name: Emit bounded anonymous report
+        if: always()
+        run: |
+          if [ -f probe-result.json ]; then cat probe-result.json; fi
