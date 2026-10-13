@@ -9,9 +9,15 @@
   "scripts": {
     "check": "tsc --noEmit",
     "test": "node --disable-warning=ExperimentalWarning --test tests/*.test.ts",
-    "probe": "node --disable-warning=ExperimentalWarning src/probe.ts"
+    "probe": "node --disable-warning=ExperimentalWarning src/probe.ts",
+    "inspect": "node --disable-warning=ExperimentalWarning src/inspect.ts",
+    "local": "node --disable-warning=ExperimentalWarning src/local.ts",
+    "watch": "node --disable-warning=ExperimentalWarning src/local.ts --watch",
+    "dashboard": "node --disable-warning=ExperimentalWarning src/dashboard.ts",
+    "open": "node --disable-warning=ExperimentalWarning scripts/open-dashboard.ts"
   },
   "dependencies": {
+    "cheerio": "1.2.0",
     "playwright": "1.62.1"
   },
   "devDependencies": {

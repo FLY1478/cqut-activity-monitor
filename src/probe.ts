@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve, join } from 'node:path';
 import { performance } from 'node:perf_hooks';
-import { ROOT, LOGIN, MOBILE_UA, encryptPassword, safeEndpoint, classifyLogin, jsonShape, isSchoolHost } from './auth-protocol.ts';
+import { ROOT, LOGIN, MOBILE_UA, encryptPassword, safeEndpoint, classifyLogin, jsonShape } from './auth-protocol.ts';
 import { readSecret, writeSecret } from './secrets.ts';
 import { loadPlaywright } from './runtime.ts';
 import { launchNormalBrowser } from './normal-browser.ts';
@@ -37,6 +37,7 @@ async function login(context:BrowserContext, credentials:Credentials):Promise<Pa
   const response=await context.request.post(LOGIN, {
     data:{name:credentials.account,pwd:encryptPassword(credentials.password),verifyCode:'',universityId:'100005'},
     headers:{Origin:'https://uis.cqut.edu.cn',Referer:page.url()}, timeout:30000,
+    maxRedirects:0,
   });
   let payload: {code?:unknown};
   try { payload=await response.json(); } catch { fail('LOGIN_RESPONSE_NOT_JSON'); }
@@ -61,6 +62,7 @@ async function login(context:BrowserContext, credentials:Credentials):Promise<Pa
       }
     }
   }
+  if (!page.url().includes('/Student/')) fail('STUDENT_ROLE_NOT_CONFIRMED');
   return page;
 }
 
@@ -148,10 +150,13 @@ try {
 
   const restored=await newMobile(browser,state);
   page=await restored.newPage();
-  await page.goto(ROOT,{waitUntil:'domcontentloaded',timeout:45000});
-  await page.waitForTimeout(2000);
-  if (!atSchool(page)) fail('SESSION_RESTORE_FAILED');
-  report.steps.push({phase:'isolated_context_restore',outcome:'second_classroom_reached'});
+  const restoredResponse=page.waitForResponse(r=>r.url().includes('/getActivityCanApply.html'),{timeout:30000});
+  await page.goto('https://2class.cqut.edu.cn/Student/Activity/index.html',{waitUntil:'domcontentloaded',timeout:45000});
+  const listResponse=await restoredResponse;
+  if(listResponse.status()!==200)fail('SESSION_RESTORE_FAILED');
+  const restoredList=await listResponse.json();
+  if(!Array.isArray(restoredList))fail('SESSION_RESTORE_FAILED');
+  report.steps.push({phase:'isolated_context_restore',outcome:'student_activity_list_verified',count:restoredList.length});
   await restored.close();
 
   // Simulate lost/expired collector state using a fresh context, without logging out

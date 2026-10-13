@@ -9,3 +9,8 @@ test-results/
 playwright-report/
 .playwright-mcp/
 access-report.json
+inspection-report.json
+diagnostic-report.json
+local-report.json
+cloud-e2e-report.json
+notification-report.json
