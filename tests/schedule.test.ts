@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {scanDue,digestDay,inMonitoringWindow} from '../src/schedule.ts';
+import {scanDue,digestDay,inMonitoringWindow,schedulePolicy} from '../src/schedule.ts';
 import {queueDigest,mergeLatestUpdates,emptyState,commitScan,deliver,reviewOutbox} from '../src/monitor.ts';
 import type {Scan} from '../src/school-client.ts';
 import type {Activity} from '../src/activity.ts';
@@ -10,10 +10,14 @@ test('night-time is quiet, including the 20:00 boundary',()=>{
   for(const clock of ['00:00','07:59','20:00','23:59']){assert.equal(inMonitoringWindow(at(clock)),false);assert.equal(scanDue(at(clock)),false);assert.equal(digestDay(at(clock)),undefined);}
   assert.equal(scanDue(at('08:00')),true);
 });
-test('30-minute polling, 19:00 digest, and retry after failures are distinct',()=>{
-  const last=new Date(at('10:00')).toISOString();
-  assert.equal(scanDue(at('10:29'),last,'2026-10-12'),false);
-  assert.equal(scanDue(at('10:30'),last,'2026-10-12'),true);
+test('three-hour daytime slots do not drift with scan duration; 19:00 digest has bounded catchup',()=>{
+  assert.equal(schedulePolicy.intervalMs,180*60*1000);
+  const last=new Date(at('08:08')).toISOString(),attempt=new Date(at('08:00')).toISOString();
+  assert.equal(scanDue(at('10:59'),last,'2026-10-12',attempt),false);
+  assert.equal(scanDue(at('11:00'),last,'2026-10-12',attempt),true);
+  assert.equal(scanDue(at('11:30'),new Date(at('11:08')).toISOString(),'2026-10-12',new Date(at('11:00')).toISOString()),false);
+  assert.equal(scanDue(at('14:00'),new Date(at('11:08')).toISOString(),'2026-10-12',new Date(at('11:00')).toISOString()),true);
+  assert.equal(scanDue(at('17:00'),new Date(at('14:08')).toISOString(),'2026-10-12',new Date(at('14:00')).toISOString()),true);
   const recent=new Date(at('18:50')).toISOString();
   assert.equal(scanDue(at('19:00'),recent,undefined,recent),true);
   const failed=new Date(at('19:00')).toISOString();

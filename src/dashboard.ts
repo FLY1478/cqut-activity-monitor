@@ -8,6 +8,8 @@ import {prepareSchool} from './signup-school.ts';
 import {startDashboard} from './dashboard-server.ts';
 import type {State} from './monitor.ts';
 import {acquireLocalLock} from './local-lock.ts';
+import {activityHighlights} from './activity-highlights.ts';
+import {schedulePolicy} from './schedule.ts';
 const privateDir=resolve(process.env.CQUT_PRIVATE_DIR??'../../work/private');process.env.CQUT_PRIVATE_DIR=privateDir;
 if(!process.env.CQUT_CHROMIUM_PATH)process.env.CQUT_CHROMIUM_PATH='C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe';
 const live=process.argv.includes('--allow-live-signup');
@@ -19,8 +21,8 @@ if(ledger.version!==1||!Array.isArray(ledger.attempts))throw new Error('INVALID_
 const data=async()=>{
   const state=await readSecret<State>(join(privateDir,'monitor-state.dpapi'));const scan=state.baseline;
   if(!scan)throw new Error('NO_SCAN_AVAILABLE');const profile=mergeProfile(scan.profile,await readPreferences(privateDir));
-  const activities=scan.activities.map(a=>personalize(a,profile)).map(a=>({...a,analysis:analyze(a,profile)})).sort((a,b)=>a.analysis.rank-b.analysis.rank||(a.applyEnd??Infinity)-(b.applyEnd??Infinity));
-  return {profile,scannedAt:scan.scannedAt,coverage:scan.coverage,activities,events:state.events.map(e=>({createdAt:e.createdAt,state:e.state,count:e.changes.length})),mode:live?'live':'simulation',cloudEnabled:false};
+  const activities=scan.activities.map(a=>personalize(a,profile)).map(a=>{const analysis=analyze(a,profile);return {...a,analysis,highlights:activityHighlights(a,analysis)};}).sort((a,b)=>a.analysis.rank-b.analysis.rank||(a.applyEnd??Infinity)-(b.applyEnd??Infinity));
+  return {profile,scannedAt:scan.scannedAt,coverage:scan.coverage,activities,events:state.events.map(e=>({createdAt:e.createdAt,state:e.state,count:e.changes.length})),mode:live?'live':'simulation',cloudEnabled:false,schedule:schedulePolicy};
 };
 const registration=new Registration({mode:live?'live':'simulation',allowLive:live,ledger,persist:l=>writeSecret(ledgerPath,l),prepare:async id=>{
   if(live)return prepareSchool(privateDir,id,true);

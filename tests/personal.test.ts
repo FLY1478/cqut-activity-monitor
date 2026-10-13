@@ -29,6 +29,15 @@ test('hands-on sports and competition are marked; difficult activities stay avai
   const work=analyze(item({title:'线上设计活动',description:'上传设计稿及一段视频。'}),profile);assert.equal(work.difficulty,'较难');assert.match(work.submissionSummary,/设计稿/);
   const summary=analyze(item({fields:{...fields,'需要提交总结':'是'},description:'现场签到。'}),profile);assert.match(summary.submissionSummary,/提交总结/);assert.ok(summary.unknowns.some(x=>x.includes('字数')));
 });
+
+test('combined location-sign field is reported and burden reflects explicit summary, signout and location requirements',()=>{
+  const evaluation=analyze(item({fields:{...fields,'需要提交总结':'是','活动签退':'是','开启定位签到/签退':'是'},description:'普通讲座。'}),profile);
+  assert.ok(evaluation.participation.some(x=>x.source==='开启定位签到/签退：是'&&x.instruction.includes('定位')));
+  assert.ok(evaluation.participation.some(x=>x.source==='活动签退：是'));
+  assert.match(evaluation.submissionSummary,/提交总结/);assert.equal(evaluation.difficulty,'较难');
+  const noLocation=analyze(item({fields:{...fields,'开启定位签到/签退':'否'}}),profile);
+  assert.ok(!noLocation.participation.some(x=>x.instruction.includes('定位')));
+});
 test('every notified activity retains evaluation and final material checklist within template limit',()=>{
   const items:Change[]=Array.from({length:12},(_,i)=>({activity:item({id:String(i+1),title:'测试讲座'+i,description:'现场签到后提交一篇300字总结。'}),reason:'new'}));
   const batches=notificationBatches(items);assert.equal(batches.flat().length,12);
