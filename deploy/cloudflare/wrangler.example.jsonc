@@ -1,0 +1,8 @@
+{
+  "name": "cqut-independent-health",
+  "main": "../../src/health-worker.ts",
+  "compatibility_date": "2026-10-13",
+  "observability": { "enabled": false },
+  "triggers": { "crons": ["*/15 * * * *"] },
+  "d1_databases": [{ "binding": "DB", "database_name": "cqut-health", "database_id": "REPLACE_WITH_OWN_DATABASE_ID" }]
+}

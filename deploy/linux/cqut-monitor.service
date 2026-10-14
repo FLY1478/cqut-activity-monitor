@@ -1,0 +1,22 @@
+[Unit]
+Description=CQUT single-user read-only activity scan
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=cqut-monitor
+Group=cqut-monitor
+WorkingDirectory=/opt/cqut-activity-monitor
+EnvironmentFile=/etc/cqut-monitor/runtime.env
+Environment=CQUT_PRIVATE_DIR=/var/lib/cqut-monitor
+Environment=CQUT_CLOUD_READONLY=1
+UMask=0077
+ExecStart=/usr/bin/xvfb-run -a /usr/bin/node src/local.ts --scheduled
+TimeoutStartSec=20min
+KillMode=control-group
+StandardOutput=journal
+StandardError=null
+# Chrome needs PID/network/user namespaces; do not set RestrictNamespaces or
+# NoNewPrivileges in a way that disables its verified normal sandbox.
+PrivateTmp=true

@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: '22'
       - run: npm ci
-      - run: npm run check && npm test
+      - run: npm run check && node --disable-warning=ExperimentalWarning scripts/cloud-unit-tests.ts
       - run: npx playwright install --with-deps chromium
       - name: Verify isolated cloud authentication
         env:
