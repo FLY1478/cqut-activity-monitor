@@ -1,0 +1,13 @@
+[Unit]
+Description=CQUT daytime scan and 19:00 digest (Asia/Shanghai)
+
+[Timer]
+OnCalendar=*-*-* 08,11,14,17,19:00:00 Asia/Shanghai
+OnCalendar=*-*-* 19:30:00 Asia/Shanghai
+AccuracySec=1s
+RandomizedDelaySec=0
+Persistent=true
+Unit=cqut-monitor.service
+
+[Install]
+WantedBy=timers.target

@@ -1,4 +1,5 @@
 node_modules/
+build/
 .private/
 .env*
 !.env.example

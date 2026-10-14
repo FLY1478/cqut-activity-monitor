@@ -9,6 +9,7 @@ import type {Page,BrowserContext} from 'playwright';
 import {readPreferences,mergeProfile} from './preferences.ts';
 import {protectReadOnly} from './read-only.ts';
 import {requireSafeScanTransition} from './scan-integrity.ts';
+import {requireStudentSession,withSessionRecovery} from './session-recovery.ts';
 type IndexResult={raw:Record<string,unknown>[];html:string;links:Map<string,string>};
 const origin='https://2class.cqut.edu.cn';
 const settings={userAgent:MOBILE_UA,viewport:{width:390,height:844},isMobile:true,hasTouch:true,serviceWorkers:'block' as const};
@@ -38,7 +39,9 @@ async function index(page:Page,section:'Activity'|'Project'|'Course',click=false
   await page.waitForLoadState('load');
   if(raw.length)await page.locator('#ajaxbox a').first().waitFor();
   const html=await page.content();const $=load(html);const links=new Map<string,string>();
-  progress?.({phase:'list_checked',section,count:raw.length,studentRoute:new URL(page.url()).pathname===`/Student/${section}/index.html`,studentMenu:$('a[href="/Student/My/index.html"]').length>0,loginPrompt:/统一身份认证|请选择本次登录角色|请先登录/.test($('body').text()),method:response.request().method()});
+  const evidence={studentRoute:new URL(page.url()).pathname.toLowerCase()===`/student/${section.toLowerCase()}/index.html`,studentMenu:$('a[href="/Student/My/index.html"]').length>0,loginPrompt:/统一身份认证|请选择本次登录角色|请先登录/.test($('body').text())};
+  progress?.({phase:'list_checked',section,count:raw.length,...evidence,method:response.request().method()});
+  requireStudentSession(evidence);
   $('#ajaxbox a[href]').each((_,a)=>{const url=new URL($(a).attr('href')!,origin);const id=url.searchParams.get(`${section.toLowerCase()}ID`);if(id){if(links.has(id))throw new Error('DUPLICATE_RENDERED_ID');links.set(id,url.href);}});
   const idKey=`${section.toLowerCase()}ID`;
   const ids=raw.map(a=>String(a[idKey]??''));
@@ -71,7 +74,13 @@ async function authenticate(context:BrowserContext,progress?:(value:unknown)=>vo
   if(!page.url().includes('/Student/'))throw new Error('STUDENT_ROLE_NOT_CONFIRMED');progress?.({phase:'student_role_confirmed'});return page;
 }
 export type Scan={scannedAt:string;complete:boolean;profile:Profile;activities:Activity[];coverage:{Activity:number;Project:number;Course:number};authMode:'restored'|'fresh';durationMs:number;sandboxVerified?:boolean};
-export async function scanSchool(privateDir:string,options:{sample?:number;forceFresh?:boolean;minimumActivities?:number;progress?:(value:unknown)=>void}={}):Promise<Scan> {
+type ScanOptions={sample?:number;forceFresh?:boolean;minimumActivities?:number;progress?:(value:unknown)=>void};
+export async function scanSchool(privateDir:string,options:ScanOptions={}):Promise<Scan>{
+  const started=Date.now();
+  const scan=await withSessionRecovery(fresh=>collectOnce(privateDir,{...options,forceFresh:fresh}),options.forceFresh,code=>options.progress?.({phase:'session_recovery',reason:code}));
+  return {...scan,durationMs:Date.now()-started};
+}
+async function collectOnce(privateDir:string,options:ScanOptions):Promise<Scan> {
   process.env.CQUT_PRIVATE_DIR=privateDir;
   const started=Date.now();const pw=await loadPlaywright();const executable=process.env.CQUT_CHROMIUM_PATH;
   if(!executable)throw new Error('CHROMIUM_PATH_REQUIRED');
@@ -79,9 +88,13 @@ export async function scanSchool(privateDir:string,options:{sample?:number;force
   options.progress?.({phase:'browser_ready',sandboxVerified:launched.sandboxStatus?.verified===true});
   try {
     let context:BrowserContext;let page:Page;let activitiesIndex:IndexResult|undefined;let authMode:Scan['authMode']='restored';
-    const state=options.forceFresh?undefined:await readSecret<Awaited<ReturnType<BrowserContext['storageState']>>>(join(privateDir,'session.dpapi')).catch(()=>undefined);
+    const state=options.forceFresh?undefined:await readSecret<Awaited<ReturnType<BrowserContext['storageState']>>>(join(privateDir,'session.dpapi')).catch(e=>{if((e as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw new Error('SESSION_STORAGE_UNREADABLE');});
     context=await launched.browser.newContext({...settings,storageState:state});await protectReadOnly(context);page=await context.newPage();
-    if(state)try {activitiesIndex=await index(page,'Activity',false,options.progress);}catch{await context.close();context=await launched.browser.newContext(settings);await protectReadOnly(context);}
+    if(state)try {activitiesIndex=await index(page,'Activity',false,options.progress);}catch(error){
+      const path=new URL(page.url()).pathname;
+      if(new URL(page.url()).hostname!=='uis.cqut.edu.cn'&&!/selRole|login|cqutCAS/i.test(path)&&!(error instanceof Error&&error.message==='STUDENT_SESSION_NOT_CONFIRMED'))throw error;
+      options.progress?.({phase:'restored_session_expired'});await context.close();context=await launched.browser.newContext(settings);await protectReadOnly(context);
+    }
     if(!activitiesIndex){authMode='fresh';if(!state)await page.close();page=await authenticate(context,options.progress);activitiesIndex=await index(page,'Activity',false,options.progress);}
     options.progress?.({phase:'activity_list',count:activitiesIndex.raw.length,authMode});
     const rawCapture:{section:string;html:string;raw?:unknown}[]=[{section:'Activity',html:activitiesIndex.html,raw:activitiesIndex.raw}];
@@ -94,6 +107,9 @@ export async function scanSchool(privateDir:string,options:{sample?:number;force
     const profile=mergeProfile(parseProfile(profileHtml),await readPreferences(privateDir));rawCapture.push({section:'My',html:profileHtml});
     options.progress?.({phase:'profile_ready'});
     await page.waitForTimeout(1000);activitiesIndex=await index(page,'Activity',true,options.progress);
+    const previous=await readSecret<Scan>(join(privateDir,'latest-scan.dpapi')).catch(e=>{if((e as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw e;});
+    // Validate unexpected emptiness before spending time on details or saving a session.
+    if(!activitiesIndex.raw.length&&((previous?.activities.length??0)>0||(options.minimumActivities??0)>0))throw new Error('UNEXPECTED_EMPTY_SCAN_NOT_COMMITTED');
     coverage.Activity=activitiesIndex.raw.length;
     const activities:Activity[]=[];const selected=options.sample===undefined?activitiesIndex.raw:activitiesIndex.raw.slice(0,options.sample);
     for(const raw of selected){
@@ -113,13 +129,13 @@ export async function scanSchool(privateDir:string,options:{sample?:number;force
         if(retry?.status()!==200)throw new Error('DETAIL_RETRY_HTTP_FAILURE');
         await page.waitForTimeout(3000);html=await page.content();a=parseActivity(raw,html,href,profile);
       }
+      if(!a.detailVerified)throw new Error('DETAIL_NOT_VERIFIED');
       activities.push(a);rawCapture.push({section:'detail',html});
       options.progress?.({phase:'details',completed:activities.length,total:selected.length});
       await page.goBack({waitUntil:'domcontentloaded'});await page.locator('#ajaxbox a').first().waitFor();
     }
     const scan:Scan={scannedAt:new Date().toISOString(),complete:activities.length===activitiesIndex.raw.length,profile,activities,coverage,authMode,durationMs:Date.now()-started,sandboxVerified:launched.sandboxStatus?.verified};
     if(scan.complete){
-      const previous=await readSecret<Scan>(join(privateDir,'latest-scan.dpapi')).catch(e=>{if((e as NodeJS.ErrnoException).code==='ENOENT')return undefined;throw e;});
       requireSafeScanTransition(previous,scan,options.minimumActivities);
     }
     // Raw pages and personal profile never leave encrypted local storage.
